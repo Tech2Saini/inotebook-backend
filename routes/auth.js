@@ -4,7 +4,9 @@ const router = express.Router();
 const { body, validationResult } = require('express-validator');
 const {admin,auth} = require("../firebase"); // your firebase.js exports admin
 const getUserDetails = require("../middleware/getUserDetails");
-
+require('dotenv').config({
+  path: require('path').resolve(__dirname, '.env')
+});
 // ROUTE 1: Register a new user with Email, Password & Name
 router.post('/signup',
   [
@@ -74,7 +76,7 @@ router.post("/login",
     // On backend, you can use REST API if needed. Here's how to call it using fetch.
 
     try {
-      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=AIzaSyBbiR58z1vVauf_yNc7di_TCDxAmpbr_gQ`, {
+      const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.ACCOUNT_API}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

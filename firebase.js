@@ -2,13 +2,7 @@ require('dotenv').config({
   path: require('path').resolve(__dirname, '.env')
 });
 const admin = require('firebase-admin');
-
-console.log({
-  projectId: process.env.FIREBASE_PROJECT_ID,
-  clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-  privateKeyExists:process.env.FIREBASE_PRIVATE_KEY
-});
-
+ 
 
 admin.initializeApp({
   credential: admin.credential.cert({
