@@ -1,9 +1,11 @@
 {
   "name": "inotebook-backend",
   "version": "1.0.0",
-  "description": "this a smart notebook app, it's hold the data on cloud.",
-  "main": "index.js",
+  "description": "A smart notebook app that stores data on the cloud.",
+  "main": "api/index.js",
   "scripts": {
+    "start": "node api/index.js",
+    "dev": "nodemon api/index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "Monu Saini",
@@ -11,11 +13,14 @@
   "dependencies": {
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.0",
     "express": "^5.1.0",
     "express-validator": "^7.2.1",
     "firebase-admin": "^13.4.0",
     "jsonwebtoken": "^9.0.2",
-    "mongoose": "^8.15.2",
+    "mongoose": "^8.15.2"
+  },
+  "devDependencies": {
     "nodemon": "^3.1.10"
   }
 }
