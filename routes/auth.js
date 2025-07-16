@@ -34,7 +34,7 @@ router.post('/signup',
       if (existingUser) {
         return res.status(403).json({
           status: false,
-          message: `Email (${email}) already exists. Please use a different email!`
+          message: `Email ${email} already exists.`
         });
       }
 
@@ -108,6 +108,7 @@ router.post("/login",
 
 // ROUTE 3: Get user details using Firebase verified token
 router.post('/getuser', getUserDetails, async (req, res) => {
+  console.log("The status code is : ",req.body)
   try {
     const userRecord = await admin.auth().getUser(req.user.id);
     res.status(200).json({

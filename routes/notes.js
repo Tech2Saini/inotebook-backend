@@ -165,6 +165,7 @@ const getUserDetails = require("../middleware/getUserDetails");
 
 // ROUTE 1: Fetch all notes for a user
 router.get("/getnotes", getUserDetails, async (req, res) => {
+    console.log("The status code is : ",res.statusCode)
     try {
         const snapshot = await db.ref(`notes/${req.user.id}`).once('value');
         const notes = [];
@@ -195,6 +196,7 @@ router.post("/addnotes", getUserDetails, [
         description,
         tag: tag || 'general',
         status: status || 'panding',
+        favorite:false,
         date: new Date().toISOString(),
         user: req.user.id
     };
@@ -214,7 +216,7 @@ router.put("/updatenotes/:id", getUserDetails, [
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-    const { title, description, tag } = req.body;
+    const { title, description, tag,status,favorite} = req.body;
     const noteRef = db.ref(`notes/${req.user.id}/${req.params.id}`);
     const snapshot = await noteRef.once('value');
 
@@ -227,6 +229,8 @@ router.put("/updatenotes/:id", getUserDetails, [
     if (title) updatedData.title = title;
     if (description) updatedData.description = description;
     if (tag) updatedData.tag = tag;
+    if (status) updatedData.status = status;
+    if (favorite) updatedData.favorite = favorite;
 
     await noteRef.update(updatedData);
 
