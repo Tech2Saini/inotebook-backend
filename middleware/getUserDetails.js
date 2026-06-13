@@ -12,7 +12,7 @@ module.exports = async function (req, res, next) {
   try {
     const decodedToken = await auth.verifyIdToken(token);
 
-    req.user = { id: decodedToken.uid };
+    req.user = { id: decodedToken.uid, email: (decodedToken.email || '').toLowerCase() };
     next();
   } catch (error) {
 

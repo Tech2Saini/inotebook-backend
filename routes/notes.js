@@ -160,7 +160,7 @@
 const express = require('express');
 const router = express.Router();
 const { body, validationResult } = require('express-validator');
-const {db} = require("../firebase");
+const {db, auth} = require("../firebase");
 const getUserDetails = require("../middleware/getUserDetails");
 
 // ROUTE 1: Fetch all notes for a user
@@ -266,6 +266,204 @@ router.post("/changestatus/:id", getUserDetails, async (req, res) => {
 
     const updatedSnap = await noteRef.once('value');
     res.status(200).json({ note: updatedSnap.val(), message: "Note marked as complete" });
+});
+
+// ====================== NOTE SHARING ======================
+// Shares are stored at  shares/{noteId}  and reference the live note.
+// visibility: "public"  -> anyone with the link can read
+// visibility: "private" -> only logged-in users whose email is in `emails`
+
+// ROUTE 6: Get the current share config for a note (owner only)
+router.get("/share/:id", getUserDetails, async (req, res) => {
+    try {
+        const shareSnap = await db.ref(`shares/${req.params.id}`).once('value');
+        if (!shareSnap.exists()) return res.status(200).json({ shared: false });
+        const share = shareSnap.val();
+        if (share.ownerUid !== req.user.id) return res.status(401).json({ message: "Not allowed" });
+        res.status(200).json({ shared: true, ...share });
+    } catch (err) {
+        res.status(400).json({ error: "Error reading share", detail: err.message });
+    }
+});
+
+// ROUTE 7: Create / update a share for a note (owner only)
+router.post("/share/:id", getUserDetails, async (req, res) => {
+    try {
+        const noteRef = db.ref(`notes/${req.user.id}/${req.params.id}`);
+        const noteSnap = await noteRef.once('value');
+        if (!noteSnap.exists()) return res.status(404).json({ message: "Note not found" });
+
+        const visibility = req.body.visibility === "private" ? "private" : "public";
+        const emails = Array.isArray(req.body.emails)
+            ? req.body.emails.map(e => String(e).trim().toLowerCase()).filter(Boolean)
+            : [];
+
+        const shareData = {
+            ownerUid: req.user.id,
+            noteId: req.params.id,
+            visibility,
+            emails,
+            createdAt: new Date().toISOString()
+        };
+
+        await db.ref(`shares/${req.params.id}`).set(shareData);
+        res.status(200).json({ shared: true, shareId: req.params.id, ...shareData });
+    } catch (err) {
+        res.status(400).json({ error: "Error creating share", detail: err.message });
+    }
+});
+
+// ROUTE 8: Stop sharing a note (owner only)
+router.delete("/share/:id", getUserDetails, async (req, res) => {
+    try {
+        const shareRef = db.ref(`shares/${req.params.id}`);
+        const shareSnap = await shareRef.once('value');
+        if (shareSnap.exists() && shareSnap.val().ownerUid !== req.user.id) {
+            return res.status(401).json({ message: "Not allowed" });
+        }
+        await shareRef.remove();
+        res.status(200).json({ shared: false, message: "Sharing stopped" });
+    } catch (err) {
+        res.status(400).json({ error: "Error removing share", detail: err.message });
+    }
+});
+
+// ROUTE 9: Public read of a shared note (NO auth required).
+// For private shares, an optional auth-token identifies the viewer's email.
+router.get("/shared/:shareId", async (req, res) => {
+    try {
+        const shareSnap = await db.ref(`shares/${req.params.shareId}`).once('value');
+        if (!shareSnap.exists()) return res.status(404).json({ message: "This shared note does not exist or was unshared." });
+        const share = shareSnap.val();
+
+        if (share.visibility === "private") {
+            const token = req.header('auth-token');
+            let viewerEmail = null;
+            if (token) {
+                try { viewerEmail = (await auth.verifyIdToken(token)).email?.toLowerCase() || null; } catch (e) { viewerEmail = null; }
+            }
+            if (!viewerEmail) {
+                return res.status(401).json({ message: "This note is private. Please log in with an invited email to view it.", requiresLogin: true });
+            }
+            if (!(share.emails || []).includes(viewerEmail)) {
+                return res.status(403).json({ message: "You don't have access to this note." });
+            }
+        }
+
+        const noteSnap = await db.ref(`notes/${share.ownerUid}/${share.noteId}`).once('value');
+        if (!noteSnap.exists()) return res.status(404).json({ message: "The original note was deleted." });
+
+        const note = noteSnap.val();
+        // Only expose the readable fields
+        res.status(200).json({
+            title: note.title,
+            description: note.description,
+            tag: note.tag,
+            status: note.status,
+            date: note.date,
+            visibility: share.visibility
+        });
+    } catch (err) {
+        res.status(400).json({ error: "Error reading shared note", detail: err.message });
+    }
+});
+
+// ROUTE 10: Get all notes shared BY the current user
+router.get("/shared-by-me", getUserDetails, async (req, res) => {
+    try {
+        console.log("[shared-by-me] user:", req.user.id);
+        const sharesSnap = await db.ref('shares').once('value');
+        console.log("[shared-by-me] shares exists:", sharesSnap.exists(), "| val:", JSON.stringify(sharesSnap.val()));
+        if (!sharesSnap.exists()) return res.status(200).json([]);
+
+        const result = [];
+        const promises = [];
+        sharesSnap.forEach(snap => {
+            const share = snap.val();
+            if (!share || !share.ownerUid || !share.noteId) return;
+            if (share.ownerUid === req.user.id) {
+                promises.push(
+                    db.ref(`notes/${share.ownerUid}/${share.noteId}`).once('value').then(noteSnap => {
+                        console.log("[shared-by-me] note lookup", share.noteId, "exists:", noteSnap.exists());
+                        if (noteSnap.exists()) {
+                            const note = noteSnap.val();
+                            const emails = share.emails
+                                ? (Array.isArray(share.emails) ? share.emails : Object.values(share.emails))
+                                : [];
+                            result.push({
+                                shareId: snap.key,
+                                noteId: share.noteId,
+                                visibility: share.visibility,
+                                emails,
+                                createdAt: share.createdAt,
+                                title: note.title,
+                                tag: note.tag,
+                            });
+                        }
+                    })
+                );
+            }
+        });
+        await Promise.all(promises);
+        console.log("[shared-by-me] result count:", result.length);
+        res.status(200).json(result);
+    } catch (err) {
+        console.error("[shared-by-me] error:", err.message);
+        res.status(400).json({ error: "Error fetching shared-by-me notes", detail: err.message });
+    }
+});
+
+// ROUTE 11: Get all notes shared WITH the current user (by email allow-list)
+router.get("/shared-with-me", getUserDetails, async (req, res) => {
+    try {
+        const userEmail = req.user.email;
+        console.log("[shared-with-me] user:", req.user.id, "email:", userEmail);
+        if (!userEmail) return res.status(200).json([]);
+
+        const sharesSnap = await db.ref('shares').once('value');
+        if (!sharesSnap.exists()) return res.status(200).json([]);
+
+        const result = [];
+        const promises = [];
+        sharesSnap.forEach(snap => {
+            const share = snap.val();
+            if (!share || !share.ownerUid || !share.noteId) return;
+
+            // Normalise emails — Firebase may store array as {0:"...", 1:"..."} object
+            const emails = share.emails
+                ? (Array.isArray(share.emails) ? share.emails : Object.values(share.emails))
+                : [];
+
+            if (
+                share.visibility === 'private' &&
+                emails.includes(userEmail) &&
+                share.ownerUid !== req.user.id
+            ) {
+                console.log("[shared-with-me] match found:", snap.key);
+                promises.push(
+                    db.ref(`notes/${share.ownerUid}/${share.noteId}`).once('value').then(noteSnap => {
+                        if (noteSnap.exists()) {
+                            const note = noteSnap.val();
+                            result.push({
+                                shareId: snap.key,
+                                noteId: share.noteId,
+                                ownerUid: share.ownerUid,
+                                createdAt: share.createdAt,
+                                title: note.title,
+                                tag: note.tag,
+                            });
+                        }
+                    })
+                );
+            }
+        });
+        await Promise.all(promises);
+        console.log("[shared-with-me] result count:", result.length);
+        res.status(200).json(result);
+    } catch (err) {
+        console.error("[shared-with-me] error:", err.message);
+        res.status(400).json({ error: "Error fetching shared-with-me notes", detail: err.message });
+    }
 });
 
 module.exports = router;
